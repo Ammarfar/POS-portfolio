@@ -28,12 +28,6 @@
 
 ---
 
-### D. Operational Reliability
-
-* Transactional consistency (order + inventory)
-
----
-
 # 2) UI Flow / User Journey
 
 ### 🔹 Merchant Onboarding
