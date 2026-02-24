@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../database/drizzle.provider';
 import * as schema from '../../database/schema';
@@ -10,19 +10,21 @@ export class OrderRepository {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
   ) {}
 
-  async create(data: {
-    tenantId: string;
-    cashierId: string;
-    subtotal: number;
-    taxAmount: number;
-    totalAmount: number;
-    paymentMethod: 'CASH' | 'CARD';
-    items: { productId: string; quantity: number; priceAtTime: number }[];
-  }) {
-    // Use a transaction to create order + items + deduct stock
-    return this.db.transaction(async (tx) => {
+  async create(
+    data: {
+      tenantId: string;
+      cashierId: string;
+      subtotal: number;
+      taxAmount: number;
+      totalAmount: number;
+      paymentMethod: 'CASH' | 'CARD';
+      items: { productId: string; quantity: number; priceAtTime: number }[];
+    },
+    tx?: any,
+  ) {
+    const execute = async (db: any) => {
       // 1. Create the order
-      const [order] = await tx
+      const [order] = await db
         .insert(schema.orders)
         .values({
           tenantId: data.tenantId,
@@ -36,7 +38,7 @@ export class OrderRepository {
         .returning();
 
       // 2. Create order items
-      await tx.insert(schema.orderItems).values(
+      await db.insert(schema.orderItems).values(
         data.items.map((item) => ({
           orderId: order.id,
           productId: item.productId,
@@ -45,22 +47,15 @@ export class OrderRepository {
         })),
       );
 
-      // 3. Deduct stock for each product
-      for (const item of data.items) {
-        await tx
-          .update(schema.products)
-          .set({
-            stock: sql`${schema.products.stock} - ${item.quantity}`,
-          })
-          .where(
-            and(
-              eq(schema.products.id, item.productId),
-              eq(schema.products.tenantId, data.tenantId),
-            ),
-          );
-      }
-
       return order;
+    };
+
+    if (tx) {
+      return execute(tx);
+    }
+
+    return this.db.transaction(async (newTx) => {
+      return execute(newTx);
     });
   }
 

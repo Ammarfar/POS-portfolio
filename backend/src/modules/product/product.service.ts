@@ -54,4 +54,17 @@ export class ProductService {
 
     return this.productRepository.delete(id, tenantId);
   }
+
+  async findById(id: string, tenantId: string) {
+    return this.productRepository.findById(id, tenantId);
+  }
+
+  async deductStock(
+    productId: string,
+    tenantId: string,
+    quantity: number,
+    tx?: any,
+  ) {
+    await this.productRepository.updateStock(productId, tenantId, -quantity, tx);
+  }
 }

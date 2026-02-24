@@ -1,8 +1,8 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../database/drizzle.provider';
 import * as schema from '../../database/schema';
+import { ProductService } from '../product/product.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import { OrderRepository } from './order.repository';
 
@@ -10,24 +10,17 @@ import { OrderRepository } from './order.repository';
 export class OrderService {
   constructor(
     private readonly orderRepository: OrderRepository,
+    private readonly productService: ProductService,
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
   ) {}
 
   async createOrder(tenantId: string, cashierId: string, dto: CreateOrderDto) {
     let subtotal = 0;
 
-    // Validate stock availability before attempting the order
+    // 1. Pre-validation and accumulation
+    const productsToDeduct: { id: string; quantity: number }[] = [];
     for (const item of dto.items) {
-      const [product] = await this.db
-        .select({ id: schema.products.id, stock: schema.products.stock, name: schema.products.name, price: schema.products.price })
-        .from(schema.products)
-        .where(
-          and(
-            eq(schema.products.id, item.product_id),
-            eq(schema.products.tenantId, tenantId),
-          ),
-        )
-        .limit(1);
+      const product = await this.productService.findById(item.product_id, tenantId);
 
       if (!product) {
         throw new BadRequestException({
@@ -45,23 +38,36 @@ export class OrderService {
 
       subtotal += product.price * item.quantity;
       item.price_at_time = product.price;
+      productsToDeduct.push({ id: item.product_id, quantity: item.quantity });
     }
 
     const taxAmount = subtotal * 0.08;
     const totalAmount = subtotal + taxAmount;
 
-    return this.orderRepository.create({
-      tenantId,
-      cashierId,
-      subtotal,
-      taxAmount,
-      totalAmount,
-      paymentMethod: dto.payment_method,
-      items: dto.items.map((item) => ({
-        productId: item.product_id,
-        quantity: item.quantity,
-        priceAtTime: item.price_at_time,
-      })),
+    // 2. Transactional Execution
+    return this.db.transaction(async (tx) => {
+      // Deduct stock via ProductService
+      for (const p of productsToDeduct) {
+        await this.productService.deductStock(p.id, tenantId, p.quantity, tx);
+      }
+
+      // Create order via OrderRepository
+      return this.orderRepository.create(
+        {
+          tenantId,
+          cashierId,
+          subtotal,
+          taxAmount,
+          totalAmount,
+          paymentMethod: dto.payment_method,
+          items: dto.items.map((item) => ({
+            productId: item.product_id,
+            quantity: item.quantity,
+            priceAtTime: item.price_at_time,
+          })),
+        },
+        tx,
+      );
     });
   }
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, ilike } from 'drizzle-orm';
+import { and, eq, ilike, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../database/drizzle.provider';
 import * as schema from '../../database/schema';
@@ -101,5 +101,25 @@ export class ProductRepository {
       )
       .returning();
     return product ?? null;
+  }
+
+  async updateStock(
+    productId: string,
+    tenantId: string,
+    quantityChange: number,
+    tx?: any,
+  ) {
+    const db = tx || this.db;
+    await db
+      .update(schema.products)
+      .set({
+        stock: sql`${schema.products.stock} + ${quantityChange}`,
+      })
+      .where(
+        and(
+          eq(schema.products.id, productId),
+          eq(schema.products.tenantId, tenantId),
+        ),
+      );
   }
 }
